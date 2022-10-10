@@ -34,7 +34,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.apache.maven.artifact.Artifact;
@@ -72,6 +75,8 @@ public class JibQuarkusExtensionTest {
   @Mock private Artifact jibModuleArtifact;
   @Mock private Build mavenBuild;
   @Mock private Plugin jibPlugin;
+
+  private final Map<String, String> properties = new HashMap<>();
 
   private static FileEntriesLayer buildLayer(String layerName, List<String> filePaths) {
     FileEntriesLayer.Builder builder = FileEntriesLayer.builder().setName(layerName);
@@ -137,7 +142,7 @@ public class JibQuarkusExtensionTest {
     ContainerBuildPlan buildPlan = ContainerBuildPlan.builder().build();
     ContainerBuildPlan newPlan =
         new JibQuarkusExtension()
-            .extendContainerBuildPlan(buildPlan, null, Optional.empty(), mavenData, logger);
+            .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
 
     assertEquals(
         Arrays.asList("java", "-verbose:gc", "-Dmy.property=value", "-jar", "/new/appRoot/app.jar"),
@@ -151,7 +156,7 @@ public class JibQuarkusExtensionTest {
 
     try {
       new JibQuarkusExtension()
-          .extendContainerBuildPlan(buildPlan, null, Optional.empty(), mavenData, logger);
+          .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
       fail();
     } catch (JibPluginExtensionException ex) {
       assertEquals(JibQuarkusExtension.class, ex.getExtensionClass());
@@ -165,7 +170,43 @@ public class JibQuarkusExtensionTest {
   }
 
   @Test
-  public void testExtendContainerBuildPlan_layers() throws JibPluginExtensionException {
+  public void testExtendContainerBuildPlan_packageTypeConfig() throws IOException, JibPluginExtensionException {
+    createFastJar();
+    Files.delete(tempFolder.getRoot().toPath().resolve("target").resolve("my-app-runner.jar"));
+    properties.put("packageType", "fast-jar");
+    ContainerBuildPlan buildPlan = ContainerBuildPlan.builder().build();
+
+    ContainerBuildPlan newPlan =
+            new JibQuarkusExtension()
+                    .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
+    assertEquals(7, newPlan.getLayers().size());
+    FileEntriesLayer lastLayer = (FileEntriesLayer) newPlan.getLayers().get(6);
+    assertEquals(
+            Collections.singletonList("/new/appRoot/quarkus-app/quarkus-run.jar"),
+            layerToExtractionPaths(lastLayer));
+  }
+
+  @Test
+  public void testExtendContainerBuildPlan_noQuarkusFastJar() throws IOException {
+    ContainerBuildPlan buildPlan = ContainerBuildPlan.builder().build();
+    properties.put("packageType", "fast-jar");
+
+    try {
+      new JibQuarkusExtension()
+              .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
+      fail();
+    } catch (JibPluginExtensionException ex) {
+      assertEquals(JibQuarkusExtension.class, ex.getExtensionClass());
+      assertThat(
+              ex.getMessage(),
+              endsWith(
+                      "quarkus-app/quarkus-run.jar doesn't exist; did you run the Quarkus Maven plugin "
+                              + "('compile' and 'quarkus:build' Maven goals)?"));
+    }
+  }
+
+  @Test
+  public void testExtendContainerBuildPlan_LegacyJarLayers() throws JibPluginExtensionException {
     FileEntriesLayer originalLayer = buildLayer("to be reset", Arrays.asList("/ignored"));
     FileEntriesLayer extraLayer1 = buildLayer("extra files", Arrays.asList("/extra/files/1"));
     FileEntriesLayer extraLayer2 = buildLayer("extra files", Arrays.asList("/extra/files/2"));
@@ -176,7 +217,7 @@ public class JibQuarkusExtensionTest {
 
     ContainerBuildPlan newPlan =
         new JibQuarkusExtension()
-            .extendContainerBuildPlan(buildPlan, null, Optional.empty(), mavenData, logger);
+            .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
 
     assertEquals(6, newPlan.getLayers().size());
     FileEntriesLayer layer1 = (FileEntriesLayer) newPlan.getLayers().get(0);
@@ -205,5 +246,102 @@ public class JibQuarkusExtensionTest {
     assertEquals(Arrays.asList("/new/appRoot/app.jar"), layerToExtractionPaths(layer4));
     assertEquals(extraLayer1.getEntries(), layer5.getEntries());
     assertEquals(extraLayer2.getEntries(), layer6.getEntries());
+  }
+
+  @Test
+  public void testExtendContainerBuildPlan_FastJarLayers() throws JibPluginExtensionException, IOException {
+    createFastJar();
+    FileEntriesLayer originalLayer = buildLayer("to be reset", Arrays.asList("/ignored"));
+    FileEntriesLayer extraLayer1 = buildLayer("extra files", Arrays.asList("/extra/files/1"));
+    FileEntriesLayer extraLayer2 = buildLayer("extra files", Arrays.asList("/extra/files/2"));
+    ContainerBuildPlan buildPlan =
+            ContainerBuildPlan.builder()
+                    .setLayers(Arrays.asList(originalLayer, extraLayer1, extraLayer2))
+                    .build();
+    properties.put("packageType", "fast-jar");
+
+    ContainerBuildPlan newPlan =
+            new JibQuarkusExtension()
+                    .extendContainerBuildPlan(buildPlan, properties, Optional.empty(), mavenData, logger);
+
+    assertEquals(9, newPlan.getLayers().size());
+    FileEntriesLayer layer1 = (FileEntriesLayer) newPlan.getLayers().get(0);
+    FileEntriesLayer layer2 = (FileEntriesLayer) newPlan.getLayers().get(1);
+    FileEntriesLayer layer3 = (FileEntriesLayer) newPlan.getLayers().get(2);
+    FileEntriesLayer layer4 = (FileEntriesLayer) newPlan.getLayers().get(3);
+    FileEntriesLayer layer5 = (FileEntriesLayer) newPlan.getLayers().get(4);
+    FileEntriesLayer layer6 = (FileEntriesLayer) newPlan.getLayers().get(5);
+    FileEntriesLayer layer7 = (FileEntriesLayer) newPlan.getLayers().get(6);
+    FileEntriesLayer layer8 = (FileEntriesLayer) newPlan.getLayers().get(7);
+    FileEntriesLayer layer9 = (FileEntriesLayer) newPlan.getLayers().get(8);
+
+    assertEquals("dependencies", layer1.getName());
+    assertEquals("snapshot dependencies", layer2.getName());
+    assertEquals("project dependencies", layer3.getName());
+    assertEquals("dependencies", layer4.getName());
+    assertEquals("snapshot dependencies", layer5.getName());
+    assertEquals("dependencies", layer6.getName());
+    assertEquals("quarkus jar", layer7.getName());
+    assertEquals("extra files", layer8.getName());
+    assertEquals("extra files", layer9.getName());
+
+    assertEquals(
+            Collections.singletonList(
+                    "/new/appRoot/quarkus-app/lib/main/com.example.third-party-artifact.jar"),
+            layerToExtractionPaths(layer1));
+    assertEquals(
+            Collections.singletonList(
+                    "/new/appRoot/quarkus-app/lib/main/com.example.third-party-SNAPSHOT-artifact.jar"),
+            layerToExtractionPaths(layer2));
+    assertEquals(
+            Collections.singletonList(
+                    "/new/appRoot/quarkus-app/lib/main/com.example.sub-module-artifact.jar"),
+            layerToExtractionPaths(layer3));
+    assertEquals(
+            Collections.singletonList(
+                    "/new/appRoot/quarkus-app/lib/boot/io.quarkus.quarkus-bootstrap-runner.jar"),
+            layerToExtractionPaths(layer4));
+    assertEquals(
+            Collections.singletonList("/new/appRoot/quarkus-app/app/my-app-runner-SNAPSHOT.jar"),
+            layerToExtractionPaths(layer5));
+    assertEquals(
+            Collections.singletonList("/new/appRoot/quarkus-app/quarkus/generated-bytecode.jar"),
+            layerToExtractionPaths(layer6));
+    assertEquals(
+            Collections.singletonList("/new/appRoot/quarkus-app/quarkus-run.jar"),
+            layerToExtractionPaths(layer7));
+    assertEquals(extraLayer1.getEntries(), layer8.getEntries());
+    assertEquals(extraLayer2.getEntries(), layer9.getEntries());
+  }
+
+  private void createLegacyJar() throws IOException {
+    Path buildDir = tempFolder.newFolder("build").toPath();
+    Path quarkusLibDir = Files.createDirectory(buildDir.resolve("lib"));
+    Files.createFile(buildDir.resolve("my-app-runner.jar"));
+    Files.createFile(quarkusLibDir.resolve("com.example.sub-module-artifact.jar"));
+    Files.createFile(quarkusLibDir.resolve("com.example.third-party-artifact.jar"));
+    Files.createFile(quarkusLibDir.resolve("com.example.third-party-SNAPSHOT-artifact.jar"));
+
+    when(mavenData.getMavenProject().getBuild().getDirectory()).thenReturn(buildDir.toString());
+  }
+
+  private void createFastJar() throws IOException {
+    Path buildDir = tempFolder.newFolder("build").toPath();
+    Path quarkusAppDir = Files.createDirectory(buildDir.resolve("quarkus-app"));
+    Path quarkusLibDir = Files.createDirectory(quarkusAppDir.resolve("lib"));
+    Path quarkusLibBootDir = Files.createDirectory(quarkusLibDir.resolve("boot"));
+    Path quarkusLibMainDir = Files.createDirectory(quarkusLibDir.resolve("main"));
+    Path quarkusAppLibDir = Files.createDirectory(quarkusAppDir.resolve("app"));
+    Path quarkusQuarkusDir = Files.createDirectory(quarkusAppDir.resolve("quarkus"));
+
+    Files.createFile(quarkusAppDir.resolve("quarkus-run.jar"));
+    Files.createFile(quarkusLibBootDir.resolve("io.quarkus.quarkus-bootstrap-runner.jar"));
+    Files.createFile(quarkusLibMainDir.resolve("com.example.sub-module-artifact.jar"));
+    Files.createFile(quarkusLibMainDir.resolve("com.example.third-party-artifact.jar"));
+    Files.createFile(quarkusLibMainDir.resolve("com.example.third-party-SNAPSHOT-artifact.jar"));
+    Files.createFile(quarkusAppLibDir.resolve("my-app-runner-SNAPSHOT.jar"));
+    Files.createFile(quarkusQuarkusDir.resolve("generated-bytecode.jar"));
+
+    when(mavenData.getMavenProject().getBuild().getDirectory()).thenReturn(buildDir.toString());
   }
 }
