@@ -27,7 +27,7 @@ public interface JarResolver {
   /**
    * Retrieves path to Jar in local environment.
    *
-   * @param project Gradle project for which this extension is run
+   * @param project Maven project for which this extension is run
    * @return path to jar in build directory
    * @throws JibPluginExtensionException if there is no jar
    */
@@ -36,7 +36,7 @@ public interface JarResolver {
   /**
    * Retrieves a list of dependencies that need to be packed together with jar.
    *
-   * @param project Gradle project for which this extension is run
+   * @param project Maven project for which this extension is run
    * @return list of paths to dependencies
    */
   List<Path> getPathsToDependencies(Project project);
